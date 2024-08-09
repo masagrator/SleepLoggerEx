@@ -13,10 +13,10 @@ extern "C" {
 	size_t fwrite( const void * buffer, size_t size, size_t count, FILE * stream ) WEAK;
 }
 
-bool Initialized = false;
 bool lock_nx = false;
 FILE* file = 0;
 bool nx_lock = false;
+Result sdmc_init = 1;
 
 ptrdiff_t returnInstructionOffset(uintptr_t LR) {
 	return LR - exl::util::GetMainModuleInfo().m_Total.m_Start;
@@ -28,11 +28,13 @@ HOOK_DEFINE_TRAMPOLINE(SleepThread) {
     static void Callback(nn::TimeSpan nanoseconds) {
 
         /* Call the original function, with the argument always being false. */
-		if (!Initialized) {
-			nn::fs::MountSdCardForDebug("sdmc");
-			file = fopen("sdmc:/SleepDebug.txt", "w");
-			if (file)
-				Initialized = true;
+		if (!file) {
+			if (R_FAILED(sdmc_init)) {
+				sdmc_init = nn::fs::MountSdCardForDebug("sdmc");
+			} 
+			else {
+				file = fopen("sdmc:/SleepDebug.txt", "w");
+			}
 		}
 		else if (nanoseconds.GetNanoSeconds() >= 10'000'000 && nanoseconds.GetNanoSeconds() <= 33'333'333) {
 			while (nx_lock) 
@@ -54,11 +56,20 @@ HOOK_DEFINE_TRAMPOLINE(SleepThread) {
 
 };
 
+namespace nn::fs {
+    /*
+        If not set to true, instead of returning result with error code
+        in case of any fs function failing, Application will abort.
+    */
+    Result SetResultHandledByApplication(bool enable);
+};
+
 /* Define hook StubCopyright. Trampoline indicates the original function should be kept. */
 /* HOOK_DEFINE_REPLACE can be used if the original function does not need to be kept. */
 
 extern "C" void exl_main(void* x0, void* x1) {
 	/* Setup hooking enviroment. */
+	nn::fs::SetResultHandledByApplication(true);
 	exl::hook::Initialize();
 	SleepThread::InstallAtFuncPtr(nn::os::SleepThread);
 
